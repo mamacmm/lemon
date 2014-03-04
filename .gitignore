@@ -1,9 +1,7 @@
+.externalToolBuilders
 target/
-
 /webapp/WEB-INF/classes
-
 /.settings
-
 /.classpath
-
 /.project
+.mymetadata
