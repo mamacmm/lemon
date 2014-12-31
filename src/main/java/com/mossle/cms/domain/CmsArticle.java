@@ -88,7 +88,7 @@ public class CmsArticle implements java.io.Serializable {
     private String template;
 
     /** null. */
-    private Integer viewCount;
+    private Integer hitCount;
 
     /** null. */
     private Long recommendId;
@@ -98,6 +98,12 @@ public class CmsArticle implements java.io.Serializable {
 
     /** null. */
     private String userId;
+
+    /** null. */
+    private Integer commentCount;
+
+    /** . */
+    private Set<CmsAttachment> cmsAttachments = new HashSet<CmsAttachment>(0);
 
     /** . */
     private Set<CmsFavorite> cmsFavorites = new HashSet<CmsFavorite>(0);
@@ -113,8 +119,9 @@ public class CmsArticle implements java.io.Serializable {
             String keyword, String tags, String source, Integer allowComment,
             Integer status, Date publishTime, Date closeTime, Integer type,
             Integer top, Integer weight, Date createTime, String template,
-            Integer viewCount, Long recommendId, Integer recommendStatus,
-            String userId, Set<CmsFavorite> cmsFavorites,
+            Integer hitCount, Long recommendId, Integer recommendStatus,
+            String userId, Integer commentCount,
+            Set<CmsAttachment> cmsAttachments, Set<CmsFavorite> cmsFavorites,
             Set<CmsComment> cmsComments) {
         this.cmsCatalog = cmsCatalog;
         this.title = title;
@@ -135,10 +142,12 @@ public class CmsArticle implements java.io.Serializable {
         this.weight = weight;
         this.createTime = createTime;
         this.template = template;
-        this.viewCount = viewCount;
+        this.hitCount = hitCount;
         this.recommendId = recommendId;
         this.recommendStatus = recommendStatus;
         this.userId = userId;
+        this.commentCount = commentCount;
+        this.cmsAttachments = cmsAttachments;
         this.cmsFavorites = cmsFavorites;
         this.cmsComments = cmsComments;
     }
@@ -430,17 +439,17 @@ public class CmsArticle implements java.io.Serializable {
     }
 
     /** @return null. */
-    @Column(name = "VIEW_COUNT")
-    public Integer getViewCount() {
-        return this.viewCount;
+    @Column(name = "HIT_COUNT")
+    public Integer getHitCount() {
+        return this.hitCount;
     }
 
     /**
-     * @param viewCount
+     * @param hitCount
      *            null.
      */
-    public void setViewCount(Integer viewCount) {
-        this.viewCount = viewCount;
+    public void setHitCount(Integer hitCount) {
+        this.hitCount = hitCount;
     }
 
     /** @return null. */
@@ -483,6 +492,34 @@ public class CmsArticle implements java.io.Serializable {
      */
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    /** @return null. */
+    @Column(name = "COMMENT_COUNT")
+    public Integer getCommentCount() {
+        return this.commentCount;
+    }
+
+    /**
+     * @param commentCount
+     *            null.
+     */
+    public void setCommentCount(Integer commentCount) {
+        this.commentCount = commentCount;
+    }
+
+    /** @return . */
+    @OneToMany(fetch = FetchType.LAZY, mappedBy = "cmsArticle")
+    public Set<CmsAttachment> getCmsAttachments() {
+        return this.cmsAttachments;
+    }
+
+    /**
+     * @param cmsAttachments
+     *            .
+     */
+    public void setCmsAttachments(Set<CmsAttachment> cmsAttachments) {
+        this.cmsAttachments = cmsAttachments;
     }
 
     /** @return . */

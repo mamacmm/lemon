@@ -75,7 +75,7 @@ $(function(){
 	border-bottom: 1px solid #C2C2C3;
 	border-radius: 0px 0px 3px 3px;
 	height: 200px;
-	overflow: hide;
+	overflow: auto;
 }
 
 .m-widget-2 .content.content-inner {
@@ -116,7 +116,7 @@ $(function(){
 			  </tr>
 			</thead>
 			<tbody>
-			<c:forEach items="${personalTasks}" var="item">
+			<c:forEach items="${personalTasks.result}" var="item">
 			  <tr>
 				<td>${item.id}</td>
 				<td>${item.name}</td>
@@ -142,7 +142,7 @@ $(function(){
 		  <marquee direction="up" scrollamount="2" >
 		  <c:forEach items="${cmsArticles}" var="item">
 		    <div>
-			  <h4>${item.title}</h4>
+			  <h4><a href="${scopePrefix}/cms/cms-article-view.do?id=${item.id}">${item.title}</a></h4>
 			  <p>${item.content}</p>
 			</div>
 			</c:forEach>

@@ -2,7 +2,17 @@ package com.mossle.form.keyvalue;
 
 import java.util.Collections;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
+
+import com.mossle.api.internal.StoreConnector;
+
+import com.mossle.ext.MultipartHandler;
+import com.mossle.ext.store.MultipartFileDataSource;
+
+import com.mossle.form.support.FormParameter;
+
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 构建Record.
@@ -11,15 +21,15 @@ public class RecordBuilder {
     /**
      * 把status和parameters更新到record里.
      */
-    public Record build(Record record, int status,
-            Map<String, String[]> parameters) {
+    public Record build(Record record, int status, FormParameter formParameter) {
         record.setStatus(status);
 
-        for (Map.Entry<String, String[]> entry : parameters.entrySet()) {
+        for (Map.Entry<String, List<String>> entry : formParameter
+                .getMultiValueMap().entrySet()) {
             String key = entry.getKey();
-            String[] value = entry.getValue();
+            List<String> value = entry.getValue();
 
-            if ((value == null) || (value.length == 0)) {
+            if ((value == null) || (value.isEmpty())) {
                 continue;
             }
 
@@ -37,34 +47,93 @@ public class RecordBuilder {
      * 创建一个新record
      */
     public Record build(String category, int status,
-            Map<String, String[]> parameters, String userId) {
+            FormParameter formParameter, String userId) {
         Record record = new Record();
         record.setCategory(category);
         record.setUserId(userId);
         record.setCreateTime(new Date());
 
-        return build(record, status, parameters);
+        return build(record, status, formParameter);
     }
 
     /**
      * 更新record的ref属性.
      */
     public Record build(Record record, int status, String ref) {
-        record.setRef(ref);
+        if (record == null) {
+            record = new Record();
+        }
 
-        return build(record, status, Collections.EMPTY_MAP);
+        record.setRef(ref);
+        record.setStatus(status);
+
+        return record;
+    }
+
+    public Record build(Record record, MultipartHandler multipartHandler,
+            StoreConnector storeConnector) throws Exception {
+        for (Map.Entry<String, List<String>> entry : multipartHandler
+                .getMultiValueMap().entrySet()) {
+            String key = entry.getKey();
+
+            if (key == null) {
+                continue;
+            }
+
+            List<String> value = entry.getValue();
+
+            if ((value == null) || (value.isEmpty())) {
+                continue;
+            }
+
+            Prop prop = new Prop();
+            prop.setCode(key);
+            prop.setType(0);
+            prop.setValue(this.getValue(value));
+            record.getProps().put(prop.getCode(), prop);
+        }
+
+        if (multipartHandler.getMultiFileMap() == null) {
+            return record;
+        }
+
+        for (Map.Entry<String, List<MultipartFile>> entry : multipartHandler
+                .getMultiFileMap().entrySet()) {
+            String key = entry.getKey();
+
+            if (key == null) {
+                continue;
+            }
+
+            List<MultipartFile> value = entry.getValue();
+
+            if ((value == null) || (value.isEmpty())) {
+                continue;
+            }
+
+            MultipartFile multipartFile = value.get(0);
+
+            Prop prop = new Prop();
+            prop.setCode(key);
+            prop.setType(0);
+            prop.setValue(storeConnector.saveStore("form",
+                    new MultipartFileDataSource(multipartFile)).getKey());
+            record.getProps().put(prop.getCode(), prop);
+        }
+
+        return record;
     }
 
     /**
      * 主要是获得多值属性，比如checkbox.
      */
-    public String getValue(String[] values) {
-        if ((values == null) || (values.length == 0)) {
+    public String getValue(List<String> values) {
+        if ((values == null) || (values.isEmpty())) {
             return "";
         }
 
-        if (values.length == 1) {
-            return values[0];
+        if (values.size() == 1) {
+            return values.get(0);
         }
 
         StringBuilder buff = new StringBuilder();

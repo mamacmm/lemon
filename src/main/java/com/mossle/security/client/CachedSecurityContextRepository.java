@@ -1,8 +1,5 @@
 package com.mossle.security.client;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
 import com.mossle.api.userauth.UserAuthConnector;
 import com.mossle.api.userauth.UserAuthDTO;
 
@@ -26,30 +23,33 @@ public class CachedSecurityContextRepository extends
         SecurityContext securityContext = super
                 .loadContext(requestResponseHolder);
 
+        if (securityContext == null) {
+            logger.debug("securityContext is null");
+
+            return null;
+        }
+
         if (debug) {
             return securityContext;
         }
 
-        if (securityContext != null) {
-            SpringSecurityUserAuth userAuthInSession = SpringSecurityUtils
-                    .getCurrentUser(securityContext);
+        SpringSecurityUserAuth userAuthInSession = SpringSecurityUtils
+                .getCurrentUser(securityContext);
 
-            if (userAuthInSession != null) {
-                UserAuthDTO userAuthInCache = userAuthConnector.findById(
-                        userAuthInSession.getId(),
-                        userAuthInSession.getScopeId());
+        if (userAuthInSession == null) {
+            logger.debug("userAuthInSession is null");
 
-                SpringSecurityUserAuth userAuthResult = new SpringSecurityUserAuth();
-                beanMapper.copy(userAuthInCache, userAuthResult);
-
-                SpringSecurityUtils.saveUserDetailsToContext(userAuthResult,
-                        null, securityContext);
-            } else {
-                logger.debug("userAuthInSession is null");
-            }
-        } else {
-            logger.debug("securityContext is null");
+            return securityContext;
         }
+
+        UserAuthDTO userAuthInCache = userAuthConnector.findById(
+                userAuthInSession.getId(), userAuthInSession.getScopeId());
+
+        SpringSecurityUserAuth userAuthResult = new SpringSecurityUserAuth();
+        beanMapper.copy(userAuthInCache, userAuthResult);
+
+        SpringSecurityUtils.saveUserDetailsToContext(userAuthResult, null,
+                securityContext);
 
         return securityContext;
     }

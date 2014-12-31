@@ -27,11 +27,27 @@ public class FreemarkerTemplateService implements TemplateService {
 
     @PostConstruct
     public void init() throws IOException {
-        configuration = new Configuration();
+        configuration = new Configuration(Configuration.VERSION_2_3_21);
 
         File templateDir = new File(baseDir);
         templateDir.mkdirs();
         configuration.setDirectoryForTemplateLoading(templateDir);
+    }
+
+    public String renderText(String text, Map<String, Object> data) {
+        try {
+            Template template = new Template(text, text, configuration);
+            StringWriter writer = new StringWriter();
+            template.process(data, writer);
+
+            return writer.toString();
+        } catch (TemplateException ex) {
+            logger.error(ex.getMessage(), ex);
+        } catch (IOException ex) {
+            logger.error(ex.getMessage(), ex);
+        }
+
+        return null;
     }
 
     public String render(String templatePath, Map<String, Object> data) {

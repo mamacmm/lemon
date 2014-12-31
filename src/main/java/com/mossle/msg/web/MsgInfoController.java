@@ -11,19 +11,19 @@ import javax.servlet.http.HttpServletResponse;
 
 import com.mossle.api.scope.ScopeHolder;
 import com.mossle.api.user.UserConnector;
+import com.mossle.api.user.UserDTO;
 
 import com.mossle.core.hibernate.PropertyFilter;
 import com.mossle.core.mapper.BeanMapper;
 import com.mossle.core.page.Page;
 import com.mossle.core.spring.MessageHelper;
 
+import com.mossle.ext.auth.CurrentUserHolder;
 import com.mossle.ext.export.Exportor;
 import com.mossle.ext.export.TableModel;
 
 import com.mossle.msg.domain.MsgInfo;
 import com.mossle.msg.manager.MsgInfoManager;
-
-import com.mossle.security.util.SpringSecurityUtils;
 
 import org.springframework.stereotype.Controller;
 
@@ -43,14 +43,15 @@ public class MsgInfoController {
     private BeanMapper beanMapper = new BeanMapper();
     private UserConnector userConnector;
     private MessageHelper messageHelper;
+    private CurrentUserHolder currentUserHolder;
 
     @RequestMapping("msg-info-list")
     public String list(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap, Model model) {
+        String userId = currentUserHolder.getUserId();
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
-        propertyFilters.add(new PropertyFilter("EQS_senderUsername",
-                SpringSecurityUtils.getCurrentUsername()));
+        propertyFilters.add(new PropertyFilter("EQS_senderId", userId));
         page = msgInfoManager.pagedQuery(page, propertyFilters);
 
         model.addAttribute("page", page);
@@ -61,30 +62,34 @@ public class MsgInfoController {
     @RequestMapping("msg-info-listReceived")
     public String listReceived(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap, Model model) {
+        String userId = currentUserHolder.getUserId();
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
-        propertyFilters.add(new PropertyFilter("EQS_receiverUsername",
-                SpringSecurityUtils.getCurrentUsername()));
+        propertyFilters.add(new PropertyFilter("EQS_receiverId", userId));
+        page.setOrder("DESC");
+        page.setOrderBy("createTime");
         page = msgInfoManager.pagedQuery(page, propertyFilters);
 
         model.addAttribute("page", page);
 
-        return "msg/msg-info-list";
+        return "msg/msg-info-listReceived";
     }
 
     @RequestMapping("msg-info-listSent")
     public String listSent(@ModelAttribute Page page,
             @RequestParam Map<String, Object> parameterMap, Model model) {
+        String userId = currentUserHolder.getUserId();
         List<PropertyFilter> propertyFilters = PropertyFilter
                 .buildFromMap(parameterMap);
 
-        propertyFilters.add(new PropertyFilter("EQS_senderUsername",
-                SpringSecurityUtils.getCurrentUsername()));
+        propertyFilters.add(new PropertyFilter("EQS_senderId", userId));
+        page.setOrder("DESC");
+        page.setOrderBy("createTime");
         page = msgInfoManager.pagedQuery(page, propertyFilters);
 
         model.addAttribute("page", page);
 
-        return "msg/msg-info-list";
+        return "msg/msg-info-listSent";
     }
 
     @RequestMapping("msg-info-input")
@@ -101,7 +106,7 @@ public class MsgInfoController {
 
     @RequestMapping("msg-info-save")
     public String save(@ModelAttribute MsgInfo msgInfo,
-            @RequestParam Map<String, Object> parameterMap,
+            @RequestParam("username") String username,
             RedirectAttributes redirectAttributes) {
         MsgInfo dest = null;
         Long id = msgInfo.getId();
@@ -112,8 +117,16 @@ public class MsgInfoController {
         } else {
             dest = msgInfo;
 
-            String username = SpringSecurityUtils.getCurrentUsername();
-            dest.setSenderUsername(username);
+            String userId = currentUserHolder.getUserId();
+            dest.setSenderId(userId);
+
+            UserDTO userDto = userConnector.findByUsername(username, "1");
+
+            if (userDto == null) {
+                throw new IllegalStateException("user not exists : " + username);
+            }
+
+            dest.setReceiverId(userDto.getId());
             dest.setCreateTime(new Date());
             dest.setStatus(0);
         }
@@ -123,7 +136,7 @@ public class MsgInfoController {
         messageHelper.addFlashMessage(redirectAttributes, "core.success.save",
                 "保存成功");
 
-        return "redirect:/msg/msg-info-list.do";
+        return "redirect:/msg/msg-info-listSent.do";
     }
 
     @RequestMapping("msg-info-remove")
@@ -155,6 +168,22 @@ public class MsgInfoController {
         exportor.export(response, tableModel);
     }
 
+    @RequestMapping("msg-info-view")
+    public String view(@RequestParam("id") Long id, Model model) {
+        String userId = currentUserHolder.getUserId();
+        MsgInfo msgInfo = msgInfoManager.get(id);
+
+        if ((msgInfo.getStatus() == 0)
+                && userId.equals(msgInfo.getReceiverId())) {
+            msgInfo.setStatus(1);
+            msgInfoManager.save(msgInfo);
+        }
+
+        model.addAttribute("model", msgInfo);
+
+        return "msg/msg-info-view";
+    }
+
     // ~ ======================================================================
     @Resource
     public void setMsgInfoManager(MsgInfoManager msgInfoManager) {
@@ -174,5 +203,10 @@ public class MsgInfoController {
     @Resource
     public void setMessageHelper(MessageHelper messageHelper) {
         this.messageHelper = messageHelper;
+    }
+
+    @Resource
+    public void setCurrentUserHolder(CurrentUserHolder currentUserHolder) {
+        this.currentUserHolder = currentUserHolder;
     }
 }

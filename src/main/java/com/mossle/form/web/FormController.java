@@ -1,30 +1,32 @@
 package com.mossle.form.web;
 
+import java.io.IOException;
+
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import javax.annotation.Resource;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import com.mossle.bpm.FormInfo;
-import com.mossle.bpm.cmd.CompleteTaskWithCommentCmd;
-import com.mossle.bpm.cmd.FindStartFormCmd;
-import com.mossle.bpm.cmd.FindTaskDefinitionsCmd;
-import com.mossle.bpm.persistence.domain.BpmConfForm;
-import com.mossle.bpm.persistence.domain.BpmConfOperation;
-import com.mossle.bpm.persistence.domain.BpmProcess;
-import com.mossle.bpm.persistence.domain.BpmTaskConf;
-import com.mossle.bpm.persistence.manager.BpmConfFormManager;
-import com.mossle.bpm.persistence.manager.BpmConfOperationManager;
-import com.mossle.bpm.persistence.manager.BpmProcessManager;
-import com.mossle.bpm.persistence.manager.BpmTaskConfManager;
+import com.mossle.api.form.FormDTO;
+import com.mossle.api.humantask.HumanTaskConnector;
+import com.mossle.api.humantask.HumanTaskDTO;
+import com.mossle.api.humantask.HumanTaskDefinition;
+import com.mossle.api.internal.StoreConnector;
+import com.mossle.api.process.ProcessConnector;
+import com.mossle.api.process.ProcessDTO;
 
 import com.mossle.core.mapper.JsonMapper;
 import com.mossle.core.spring.MessageHelper;
+
+import com.mossle.ext.MultipartHandler;
+import com.mossle.ext.auth.CurrentUserHolder;
 
 import com.mossle.form.domain.FormTemplate;
 import com.mossle.form.keyvalue.KeyValue;
@@ -32,21 +34,10 @@ import com.mossle.form.keyvalue.Prop;
 import com.mossle.form.keyvalue.Record;
 import com.mossle.form.keyvalue.RecordBuilder;
 import com.mossle.form.manager.FormTemplateManager;
-import com.mossle.form.operation.CompleteTaskOperation;
-import com.mossle.form.operation.ConfAssigneeOperation;
-import com.mossle.form.operation.SaveDraftOperation;
-import com.mossle.form.operation.StartProcessOperation;
-
-import com.mossle.security.util.SpringSecurityUtils;
-
-import org.activiti.engine.FormService;
-import org.activiti.engine.IdentityService;
-import org.activiti.engine.ProcessEngine;
-import org.activiti.engine.TaskService;
-import org.activiti.engine.impl.task.TaskDefinition;
-import org.activiti.engine.repository.ProcessDefinition;
-import org.activiti.engine.runtime.ProcessInstance;
-import org.activiti.engine.task.Task;
+import com.mossle.form.service.FormService;
+import com.mossle.form.support.FormParameter;
+import com.mossle.form.xform.Xform;
+import com.mossle.form.xform.XformBuilder;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +53,9 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.MultipartHttpServletRequest;
+import org.springframework.web.multipart.MultipartResolver;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 /**
@@ -77,15 +71,16 @@ public class FormController {
     public static final int STATUS_DRAFT_PROCESS = 0;
     public static final int STATUS_DRAFT_TASK = 1;
     public static final int STATUS_RUNNING = 2;
-    private ProcessEngine processEngine;
-    private BpmProcessManager bpmProcessManager;
-    private BpmTaskConfManager bpmTaskConfManager;
-    private BpmConfOperationManager bpmConfOperationManager;
-    private BpmConfFormManager bpmConfFormManager;
     private FormTemplateManager formTemplateManager;
     private JsonMapper jsonMapper = new JsonMapper();
     private KeyValue keyValue;
     private MessageHelper messageHelper;
+    private CurrentUserHolder currentUserHolder;
+    private FormService formService;
+    private ProcessConnector processConnector;
+    private HumanTaskConnector humanTaskConnector;
+    private MultipartResolver multipartResolver;
+    private StoreConnector storeConnector;
 
     /**
      * 保存草稿.
@@ -94,14 +89,9 @@ public class FormController {
     public String saveDraft(
             @RequestParam MultiValueMap<String, String> multiValueMap)
             throws Exception {
-        Map<String, String[]> parameterMap = new HashMap<String, String[]>();
+        FormParameter formParameter = new FormParameter(multiValueMap);
 
-        for (Map.Entry<String, List<String>> entry : multiValueMap.entrySet()) {
-            parameterMap.put(entry.getKey(),
-                    entry.getValue().toArray(new String[0]));
-        }
-
-        new SaveDraftOperation().execute(parameterMap);
+        formService.saveDraft(currentUserHolder.getUserId(), formParameter);
 
         return "form/form-saveDraft";
     }
@@ -111,12 +101,72 @@ public class FormController {
      */
     @RequestMapping("form-listDrafts")
     public String listDrafts(Model model) throws Exception {
-        String userId = SpringSecurityUtils.getCurrentUserId();
+        String userId = currentUserHolder.getUserId();
         List<Record> records = keyValue.findByStatus(STATUS_DRAFT_PROCESS,
                 userId);
         model.addAttribute("records", records);
 
         return "form/form-listDrafts";
+    }
+
+    /**
+     * 根据流程定义获得formDto.
+     */
+    public FormDTO findStartForm(String processDefinitionId) {
+        FormDTO formDto = processConnector.findStartForm(processDefinitionId);
+
+        return formDto;
+    }
+
+    /**
+     * 根据taskId获得formDto.
+     */
+    public FormDTO findTaskForm(HumanTaskDTO humanTaskDto) {
+        FormDTO formDto = humanTaskConnector.findTaskForm(humanTaskDto.getId());
+
+        return formDto;
+    }
+
+    /**
+     * 读取草稿箱中的表单数据，转换成json.
+     */
+    public String findStartFormData(String businessKey) throws Exception {
+        Record record = keyValue.findByCode(businessKey);
+
+        if (record == null) {
+            return null;
+        }
+
+        Map map = new HashMap();
+
+        for (Prop prop : record.getProps().values()) {
+            map.put(prop.getCode(), prop.getValue());
+        }
+
+        String json = jsonMapper.toJson(map);
+
+        return json;
+    }
+
+    /**
+     * 读取任务对应的表单数据，转换成json.
+     */
+    public String findTaskFormData(String processInstanceId) throws Exception {
+        Record record = keyValue.findByRef(processInstanceId);
+
+        if (record == null) {
+            return null;
+        }
+
+        Map map = new HashMap();
+
+        for (Prop prop : record.getProps().values()) {
+            map.put(prop.getCode(), prop.getValue());
+        }
+
+        String json = jsonMapper.toJson(map);
+
+        return json;
     }
 
     /**
@@ -130,19 +180,19 @@ public class FormController {
         model.addAttribute("bpmProcessId", bpmProcessId);
         model.addAttribute("businessKey", businessKey);
 
-        BpmProcess bpmProcess = bpmProcessManager.get(bpmProcessId);
-        String processDefinitionId = bpmProcess.getBpmConfBase()
-                .getProcessDefinitionId();
+        ProcessDTO processDto = processConnector.findProcess(Long
+                .toString(bpmProcessId));
 
-        FormInfo formInfo = processEngine.getManagementService()
-                .executeCommand(new FindStartFormCmd(processDefinitionId));
-        model.addAttribute("formInfo", formInfo);
+        String processDefinitionId = processDto.getProcessDefinitionId();
+
+        FormDTO formDto = this.findStartForm(processDefinitionId);
+        model.addAttribute("formDto", formDto);
 
         String nextStep = null;
 
-        if (formInfo.isFormExists()) {
+        if (formDto.isExists()) {
             // 如果找到了form，就显示表单
-            if (Integer.valueOf(1).equals(bpmProcess.getUseTaskConf())) {
+            if (processDto.isConfigTask()) {
                 // 如果需要配置负责人
                 nextStep = "taskConf";
             } else {
@@ -151,45 +201,21 @@ public class FormController {
 
             model.addAttribute("nextStep", nextStep);
 
-            List<BpmConfForm> bpmConfForms = bpmConfFormManager
-                    .find("from BpmConfForm where bpmConfNode.bpmConfBase.processDefinitionId=? and bpmConfNode.code=?",
-                            formInfo.getProcessDefinitionId(),
-                            formInfo.getActivityId());
-
-            if (!bpmConfForms.isEmpty()) {
-                if (Integer.valueOf(1).equals(bpmConfForms.get(0).getType())) {
-                    String redirectUrl = bpmConfForms.get(0).getValue()
-                            + "?processDefinitionId="
-                            + formInfo.getProcessDefinitionId();
-
-                    return "redirect:" + redirectUrl;
-                }
-            }
-
-            FormTemplate formTemplate = formTemplateManager.get(Long
-                    .parseLong(formInfo.getFormKey()));
-
-            if (Integer.valueOf(1).equals(formTemplate.getType())) {
-                String redirectUrl = formTemplate.getContent()
-                        + "?processDefinitionId="
-                        + formInfo.getProcessDefinitionId();
-                ;
+            if (formDto.isRedirect()) {
+                String redirectUrl = formDto.getUrl() + "?processDefinitionId="
+                        + formDto.getProcessDefinitionId();
 
                 return "redirect:" + redirectUrl;
             }
 
+            FormTemplate formTemplate = formTemplateManager.findUniqueBy(
+                    "code", formDto.getCode());
+
             model.addAttribute("formTemplate", formTemplate);
 
-            Record record = keyValue.findByCode(businessKey);
+            String json = this.findStartFormData(businessKey);
 
-            if (record != null) {
-                Map map = new HashMap();
-
-                for (Prop prop : record.getProps().values()) {
-                    map.put(prop.getCode(), prop.getValue());
-                }
-
-                String json = jsonMapper.toJson(map);
+            if (json != null) {
                 model.addAttribute("json", json);
             }
 
@@ -213,30 +239,24 @@ public class FormController {
             Model model) {
         model.addAttribute("bpmProcessId", bpmProcessId);
 
-        Map<String, String[]> parameterMap = new HashMap<String, String[]>();
+        FormParameter formParameter = new FormParameter(multiValueMap);
 
-        for (Map.Entry<String, List<String>> entry : multiValueMap.entrySet()) {
-            parameterMap.put(entry.getKey(),
-                    entry.getValue().toArray(new String[0]));
-        }
-
-        businessKey = new SaveDraftOperation().execute(parameterMap);
+        businessKey = formService.saveDraft(currentUserHolder.getUserId(),
+                formParameter);
         model.addAttribute("businessKey", businessKey);
 
-        BpmProcess bpmProcess = bpmProcessManager.get(bpmProcessId);
-        String processDefinitionId = bpmProcess.getBpmConfBase()
-                .getProcessDefinitionId();
+        ProcessDTO processDto = processConnector.findProcess(Long
+                .toString(bpmProcessId));
+        String processDefinitionId = processDto.getProcessDefinitionId();
 
-        if (Integer.valueOf(1).equals(bpmProcess.getUseTaskConf())) {
+        if (processDto.isConfigTask()) {
             // 如果需要配置负责人
             nextStep = "confirmStartProcess";
             model.addAttribute("nextStep", nextStep);
 
-            FindTaskDefinitionsCmd cmd = new FindTaskDefinitionsCmd(
-                    processDefinitionId);
-            List<TaskDefinition> taskDefinitions = processEngine
-                    .getManagementService().executeCommand(cmd);
-            model.addAttribute("taskDefinitions", taskDefinitions);
+            List<HumanTaskDefinition> humanTaskDefinitions = humanTaskConnector
+                    .findHumanTaskDefinitions(processDefinitionId);
+            model.addAttribute("humanTaskDefinitions", humanTaskDefinitions);
 
             return "form/form-taskConf";
         } else {
@@ -245,19 +265,22 @@ public class FormController {
         }
     }
 
+    /**
+     * 确认发起流程.
+     */
     @RequestMapping("form-confirmStartProcess")
     public String confirmStartProcess(
             @RequestParam("bpmProcessId") Long bpmProcessId,
             @RequestParam MultiValueMap<String, String> multiValueMap,
             Model model) {
-        Map<String, String[]> parameterMap = new HashMap<String, String[]>();
+        FormParameter formParameter = new FormParameter(multiValueMap);
 
-        for (Map.Entry<String, List<String>> entry : multiValueMap.entrySet()) {
-            parameterMap.put(entry.getKey(),
-                    entry.getValue().toArray(new String[0]));
-        }
+        String businessKey = formService.saveDraft(
+                currentUserHolder.getUserId(), formParameter);
+        humanTaskConnector.configTaskDefinitions(businessKey,
+                formParameter.getList("taskDefinitionKeys"),
+                formParameter.getList("taskAssignees"));
 
-        String businessKey = new ConfAssigneeOperation().execute(parameterMap);
         String nextStep = "startProcessInstance";
         model.addAttribute("businessKey", businessKey);
         model.addAttribute("nextStep", nextStep);
@@ -270,19 +293,175 @@ public class FormController {
      * 发起流程.
      */
     @RequestMapping("form-startProcessInstance")
-    public String startProcessInstance(
-            @RequestParam MultiValueMap<String, String> multiValueMap,
-            Model model) throws Exception {
-        Map<String, String[]> parameterMap = new HashMap<String, String[]>();
+    public String startProcessInstance(HttpServletRequest request, Model model)
+            throws Exception {
+        MultipartHandler multipartHandler = new MultipartHandler(
+                multipartResolver);
+        Record record = null;
+        String businessKey = null;
+        FormParameter formParameter = null;
 
-        for (Map.Entry<String, List<String>> entry : multiValueMap.entrySet()) {
-            parameterMap.put(entry.getKey(),
-                    entry.getValue().toArray(new String[0]));
+        try {
+            multipartHandler.handle(request);
+            logger.info("{}", multipartHandler.getMultiValueMap());
+            logger.info("{}", multipartHandler.getMultiFileMap());
+
+            formParameter = new FormParameter(
+                    multipartHandler.getMultiValueMap());
+            businessKey = formService.saveDraft(currentUserHolder.getUserId(),
+                    formParameter);
+            record = keyValue.findByCode(businessKey);
+
+            record = new RecordBuilder().build(record, multipartHandler,
+                    storeConnector);
+
+            keyValue.save(record);
+        } finally {
+            multipartHandler.clear();
         }
 
-        new StartProcessOperation().execute(parameterMap);
+        humanTaskConnector.configTaskDefinitions(businessKey,
+                formParameter.getList("taskDefinitionKeys"),
+                formParameter.getList("taskAssignees"));
+
+        ProcessDTO processDto = processConnector.findProcess(formParameter
+                .getBpmProcessId());
+        String processDefinitionId = processDto.getProcessDefinitionId();
+
+        // 获得form的信息
+        FormDTO formDto = processConnector.findStartForm(processDefinitionId);
+
+        FormTemplate formTemplate = formTemplateManager.findUniqueBy("code",
+                formDto.getCode());
+        Xform xform = new XformBuilder().setStoreConnector(storeConnector)
+                .setContent(formTemplate.getContent()).setRecord(record)
+                .build();
+        Map<String, Object> processParameters = xform.getMapData();
+        logger.info("processParameters : {}", processParameters);
+
+        String processInstanceId = processConnector.startProcess(
+                currentUserHolder.getUserId(), businessKey,
+                processDefinitionId, processParameters);
+
+        record = new RecordBuilder().build(record, STATUS_RUNNING,
+                processInstanceId);
+        keyValue.save(record);
 
         return "form/form-startProcessInstance";
+    }
+
+    /**
+     * 显示任务表单.
+     */
+    @RequestMapping("form-viewTaskForm")
+    public String viewTaskForm(@RequestParam("taskId") String humanTaskId,
+            Model model, RedirectAttributes redirectAttributes)
+            throws Exception {
+        HumanTaskDTO humanTaskDto = humanTaskConnector
+                .findHumanTask(humanTaskId);
+
+        if (humanTaskDto == null) {
+            messageHelper.addFlashMessage(redirectAttributes, "任务不存在");
+
+            return "redirect:/bpm/workspace-listPersonalTasks.do";
+        }
+
+        FormDTO formDto = this.findTaskForm(humanTaskDto);
+
+        if (formDto.isRedirect()) {
+            String redirectUrl = formDto.getUrl() + "?taskId="
+                    + formDto.getTaskId();
+
+            return "redirect:" + redirectUrl;
+        }
+
+        model.addAttribute("formDto", formDto);
+
+        FormTemplate formTemplate = formTemplateManager.findUniqueBy("code",
+                formDto.getCode());
+        model.addAttribute("formTemplate", formTemplate);
+
+        if ((humanTaskId != null) && (!"".equals(humanTaskId))) {
+            // 如果是任务草稿，直接通过processInstanceId获得record，更新数据
+            // TODO: 分支肯定有问题
+            String processInstanceId = humanTaskDto.getProcessInstanceId();
+            String json = this.findTaskFormData(processInstanceId);
+
+            if (json != null) {
+                model.addAttribute("json", json);
+            }
+        }
+
+        return "form/form-viewTaskForm";
+    }
+
+    /**
+     * 完成任务.
+     */
+    @RequestMapping("form-completeTask")
+    public String completeTask(HttpServletRequest request,
+            RedirectAttributes redirectAttributes) throws Exception {
+        MultipartHandler multipartHandler = new MultipartHandler(
+                multipartResolver);
+        Record record = null;
+        String taskId = null;
+        FormParameter formParameter = null;
+        HumanTaskDTO humanTaskDto = null;
+        FormDTO formDto = null;
+
+        try {
+            multipartHandler.handle(request);
+            logger.info("{}", multipartHandler.getMultiValueMap());
+            logger.info("{}", multipartHandler.getMultiFileMap());
+
+            formParameter = new FormParameter(
+                    multipartHandler.getMultiValueMap());
+
+            taskId = formParameter.getTaskId();
+            formService.saveDraft(currentUserHolder.getUserId(), formParameter);
+
+            formDto = humanTaskConnector.findTaskForm(taskId);
+
+            humanTaskDto = humanTaskConnector.findHumanTask(taskId);
+
+            String processInstanceId = humanTaskDto.getProcessInstanceId();
+            record = keyValue.findByRef(processInstanceId);
+
+            record = new RecordBuilder().build(record, multipartHandler,
+                    storeConnector);
+
+            keyValue.save(record);
+        } finally {
+            multipartHandler.clear();
+        }
+
+        FormTemplate formTemplate = formTemplateManager.findUniqueBy("code",
+                formDto.getCode());
+        Xform xform = new XformBuilder().setStoreConnector(storeConnector)
+                .setContent(formTemplate.getContent()).setRecord(record)
+                .build();
+        Map<String, Object> taskParameters = xform.getMapData();
+        logger.info("taskParameters : {}", taskParameters);
+
+        try {
+            humanTaskConnector.completeTask(taskId,
+                    currentUserHolder.getUserId(), taskParameters);
+        } catch (IllegalStateException ex) {
+            logger.error(ex.getMessage(), ex);
+            messageHelper.addFlashMessage(redirectAttributes, ex.getMessage());
+
+            return "redirect:/bpm/workspace-listPersonalTasks.do";
+        }
+
+        if (record == null) {
+            record = new Record();
+        }
+
+        record = new RecordBuilder().build(record, STATUS_RUNNING,
+                humanTaskDto.getProcessInstanceId());
+        keyValue.save(record);
+
+        return "form/form-completeTask";
     }
 
     /**
@@ -296,134 +475,40 @@ public class FormController {
         }
     }
 
-    /**
-     * 显示任务表单.
-     */
-    @RequestMapping("form-viewTaskForm")
-    public String viewTaskForm(@RequestParam("taskId") String taskId,
-            Model model, RedirectAttributes redirectAttributes)
-            throws Exception {
-        TaskService taskService = processEngine.getTaskService();
-        Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
-
-        if (task == null) {
-            messageHelper.addFlashMessage(redirectAttributes, "任务不存在");
-
-            return "redirect:/bpm/workspace-listPersonalTasks.do";
-        }
-
-        FormService formService = processEngine.getFormService();
-        String taskFormKey = formService.getTaskFormKey(
-                task.getProcessDefinitionId(), task.getTaskDefinitionKey());
-        FormTemplate formTemplate = formTemplateManager.get(Long
-                .parseLong(taskFormKey));
-        model.addAttribute("formTemplate", formTemplate);
-
-        FormInfo formInfo = new FormInfo();
-        formInfo.setTaskId(taskId);
-        model.addAttribute("formInfo", formInfo);
-
-        List<BpmConfOperation> bpmConfOperations = bpmConfOperationManager
-                .find("from BpmConfOperation where bpmConfNode.bpmConfBase.processDefinitionId=? and bpmConfNode.code=?",
-                        task.getProcessDefinitionId(),
-                        task.getTaskDefinitionKey());
-
-        for (BpmConfOperation bpmConfOperation : bpmConfOperations) {
-            formInfo.getButtons().add(bpmConfOperation.getValue());
-        }
-
-        String processDefinitionId = task.getProcessDefinitionId();
-        String activitiyId = task.getTaskDefinitionKey();
-        List<BpmConfForm> bpmConfForms = bpmConfFormManager
-                .find("from BpmConfForm where bpmConfNode.bpmConfBase.processDefinitionId=? and bpmConfNode.code=?",
-                        processDefinitionId, activitiyId);
-
-        if (!bpmConfForms.isEmpty()) {
-            if (Integer.valueOf(1).equals(bpmConfForms.get(0).getType())) {
-                String redirectUrl = bpmConfForms.get(0).getValue()
-                        + "?taskId=" + taskId;
-
-                return "redirect:" + redirectUrl;
-            }
-        }
-
-        if ((formTemplate != null)
-                && Integer.valueOf(1).equals(formTemplate.getType())) {
-            String redirectUrl = formTemplate.getContent() + "?taskId="
-                    + taskId;
-
-            return "redirect:" + redirectUrl;
-        }
-
-        if ((taskId != null) && (!"".equals(taskId))) {
-            // 如果是任务草稿，直接通过processInstanceId获得record，更新数据
-            // TODO: 分支肯定有问题
-            String processInstanceId = task.getProcessInstanceId();
-            Record record = keyValue.findByRef(processInstanceId);
-
-            if (record != null) {
-                Map map = new HashMap();
-
-                for (Prop prop : record.getProps().values()) {
-                    map.put(prop.getCode(), prop.getValue());
-                }
-
-                String json = jsonMapper.toJson(map);
-                model.addAttribute("json", json);
-            }
-        }
-
-        return "form/form-viewTaskForm";
-    }
-
-    /**
-     * 完成任务.
-     */
-    @RequestMapping("form-completeTask")
-    public String completeTask(
-            @RequestParam MultiValueMap<String, String> multiValueMap,
-            RedirectAttributes redirectAttributes) throws Exception {
-        Map<String, String[]> parameterMap = new HashMap<String, String[]>();
-
-        for (Map.Entry<String, List<String>> entry : multiValueMap.entrySet()) {
-            parameterMap.put(entry.getKey(),
-                    entry.getValue().toArray(new String[0]));
-        }
+    public Map<String, String> fetchFormTypeMap(String content) {
+        logger.debug("content : {}", content);
 
         try {
-            new CompleteTaskOperation().execute(parameterMap);
-        } catch (IllegalStateException ex) {
+            Map map = jsonMapper.fromJson(content, Map.class);
+            logger.debug("map : {}", map);
+
+            List<Map> sections = (List<Map>) map.get("sections");
+            logger.debug("sections : {}", sections);
+
+            Map<String, String> formTypeMap = new HashMap<String, String>();
+
+            for (Map section : sections) {
+                if (!"grid".equals(section.get("type"))) {
+                    continue;
+                }
+
+                List<Map> fields = (List<Map>) section.get("fields");
+
+                for (Map field : fields) {
+                    formTypeMap.put((String) field.get("name"),
+                            (String) field.get("type"));
+                }
+            }
+
+            return formTypeMap;
+        } catch (IOException ex) {
             logger.error(ex.getMessage(), ex);
-            messageHelper.addFlashMessage(redirectAttributes, ex.getMessage());
 
-            return "redirect:/bpm/workspace-listPersonalTasks.do";
+            return Collections.emptyMap();
         }
-
-        return "form/form-completeTask";
     }
 
     // ~ ======================================================================
-    @Resource
-    public void setProcessEngine(ProcessEngine processEngine) {
-        this.processEngine = processEngine;
-    }
-
-    @Resource
-    public void setBpmProcessManager(BpmProcessManager bpmProcessManager) {
-        this.bpmProcessManager = bpmProcessManager;
-    }
-
-    @Resource
-    public void setBpmTaskConfManager(BpmTaskConfManager bpmTaskConfManager) {
-        this.bpmTaskConfManager = bpmTaskConfManager;
-    }
-
-    @Resource
-    public void setBpmConfOperationManager(
-            BpmConfOperationManager bpmConfOperationManager) {
-        this.bpmConfOperationManager = bpmConfOperationManager;
-    }
-
     @Resource
     public void setFormTemplateManager(FormTemplateManager formTemplateManager) {
         this.formTemplateManager = formTemplateManager;
@@ -440,7 +525,32 @@ public class FormController {
     }
 
     @Resource
-    public void setBpmConfFormManager(BpmConfFormManager bpmConfFormManager) {
-        this.bpmConfFormManager = bpmConfFormManager;
+    public void setCurrentUserHolder(CurrentUserHolder currentUserHolder) {
+        this.currentUserHolder = currentUserHolder;
+    }
+
+    @Resource
+    public void setFormService(FormService formService) {
+        this.formService = formService;
+    }
+
+    @Resource
+    public void setProcessConnector(ProcessConnector processConnector) {
+        this.processConnector = processConnector;
+    }
+
+    @Resource
+    public void setHumanTaskConnector(HumanTaskConnector humanTaskConnector) {
+        this.humanTaskConnector = humanTaskConnector;
+    }
+
+    @Resource
+    public void setMultipartResolver(MultipartResolver multipartResolver) {
+        this.multipartResolver = multipartResolver;
+    }
+
+    @Resource
+    public void setStoreConnector(StoreConnector storeConnector) {
+        this.storeConnector = storeConnector;
     }
 }

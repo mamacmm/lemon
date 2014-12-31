@@ -255,6 +255,11 @@ xf.Xform.prototype.addRow = function() {
 	section.addRow();
 }
 
+xf.Xform.prototype.removeRow = function() {
+	var section = this.sections[1];
+	section.removeRow();
+}
+
 xf.Xform.prototype.render = function() {
 	for (var i = 0; i < this.sections.length; i++) {
 		var section = this.sections[i];
@@ -263,7 +268,7 @@ xf.Xform.prototype.render = function() {
 }
 
 xf.Xform.prototype.doExport = function() {
-	var text = '{"sections":[';
+	var text = '{"name":"' + this.name + '","code":"' + this.code + '","sections":[';
 	for (var i = 0; i < this.sections.length; i++) {
 		var sectionText = this.sections[i].doExport();
 		text += sectionText;
@@ -277,6 +282,9 @@ xf.Xform.prototype.doExport = function() {
 
 xf.Xform.prototype.doImport = function(text) {
 	var o = eval('(' + text + ')');
+
+	this.name = o.name;
+	this.code = o.code;
 
 	xf.$(this.id).innerHTML = '';
 	this.sections = [];
@@ -422,6 +430,7 @@ xf.GridSection.prototype.merge = function() {
 	var rowSpan = el.rowSpan + maxRow - minRow;
 	el.setAttribute("colspan", colSpan);
 	el.setAttribute("rowspan", rowSpan);
+	el.setAttribute("width", (100 * colSpan / this.col) + '%');
 	var els = this.selectedItems.slice(1);
 	for (var i = 0; i < els.length; i++) {
 		var el = els[i];
@@ -456,6 +465,7 @@ xf.GridSection.prototype.split = function() {
 	}
 	el.setAttribute("colspan", 1);
 	el.setAttribute("rowspan", 1);
+	el.setAttribute("width", (100 / this.col) + '%');
 
 	for (var i = 0; i < position.width; i++) {
 
@@ -467,6 +477,7 @@ xf.GridSection.prototype.split = function() {
 			var targetCol = position.col + i;
 
 			var td = document.createElement('td');
+			td.setAttribute("width", (100 / this.col) + '%');
 			td.innerHTML = '<div>&nbsp;</div>';
 			td.id = this.id + '-' + targetRow + '-' + targetCol;
 
@@ -626,6 +637,40 @@ xf.GridSection.prototype.addRow = function() {
 	}
 	this.row++;
 }
+
+xf.GridSection.prototype.removeRow = function() {
+	if (this.selectedItems.length == 0) {
+		return false;
+	}
+
+	var td = this.selectedItems[0];
+	var tr = td.parentNode;
+	var tbody = tr.parentNode;
+
+	try {
+		if (tbody.children[0] == tr) {
+			for (var i = 0; i < tbody.children[1].children.length; i++) {
+				var td = tbody.children[1].children[i];
+				td.className += ' xf-cell-top';
+			}
+		}
+	} catch(e) {
+	}
+
+	try {
+		if (tbody.children[tbody.children.length - 1] == tr) {
+			for (var i = 0; i < tbody.children[tbody.children.length - 2].children.length; i++) {
+				var td = tbody.children[tbody.children.length - 2].children[i];
+				td.className += ' xf-cell-bottom';
+			}
+		}
+	} catch(e) {
+	}
+
+	tr.parentNode.removeChild(tr);
+
+	this.selectedItems = [];
+};
 
 xf.GridSection.prototype.findTbody = function() {
 	var el = xf.$(this.id);
@@ -942,7 +987,7 @@ xf.field.TextField.prototype.updateName = function(value) {
 	var parentNode = xf.$(this.parentId);
 	parentNode.innerHTML = 
 		'<div class="xf-handler">'
-		+ '<input type="text" name="' + this.name + '" ' + (this.readOnly ? 'readOnly' : '') + ' value="' + (this.value ? this.value : '') + '" style="margin-bottom:0px;cursor:move;">'
+		+ '<input type="text" name="' + this.name + '" ' + (this.readOnly ? 'readOnly' : '') + ' value="' + (this.value ? this.value : '') + '" style="margin-bottom:0px;cursor:move;" maxlength="200">'
 		+ '</div>';
 }
 
@@ -1007,7 +1052,7 @@ xf.field.Password.prototype.updateName = function(value) {
 	var parentNode = xf.$(this.parentId);
 	parentNode.innerHTML = 
 		'<div class="xf-handler">'
-		+ '<input type="password" name="' + this.name + '" ' + (this.readOnly ? 'readOnly' : '') + ' style="margin-bottom:0px;cursor:move;">'
+		+ '<input type="password" name="' + this.name + '" ' + (this.readOnly ? 'readOnly' : '') + ' style="margin-bottom:0px;cursor:move;" maxlength="200">'
 		+ '</div>';
 }
 
@@ -1066,7 +1111,7 @@ xf.field.TextArea.prototype.updateName = function(value) {
 	var parentNode = xf.$(this.parentId);
 	parentNode.innerHTML = 
 		'<div class="xf-handler">'
-		+ '<textarea name="' + this.name + '" ' + (this.readOnly ? 'readOnly' : '') + ' style="margin-bottom:0px;cursor:move;">' + (this.value ? this.value : '') + '</textarea>'
+		+ '<textarea name="' + this.name + '" ' + (this.readOnly ? 'readOnly' : '') + ' style="margin-bottom:0px;cursor:move;" maxlength="200">' + (this.value ? this.value : '') + '</textarea>'
 		+ '</div>';
 }
 
@@ -1223,8 +1268,10 @@ xf.field.Radio.prototype.updateItems = function(value) {
 	var array = this.items.split(',');
 	for (var i = 0; i < array.length; i++) {
 		var item = array[i];
+		html += '<label class="radio inline">';
 		html += '<input type="radio" name="' + this.name + '" value="' + item + '" ' + (this.readOnly ? 'readOnly' : '') + ' ' + (this.value == item ? 'checked' : '') + ' style="margin:0px;cursor:move;">';
 		html += item;
+		html += '</label>';
 	}
 	parentNode.innerHTML = html + '</div>';
 }
@@ -1273,7 +1320,7 @@ xf.field.Checkbox.prototype.doExport = function() {
 		+ ',"col":' + this.col
 		+ ',"name":"' + this.name
 		+ '","items":"' + this.items
-		+ '","required:' + this.required
+		+ '","required":' + this.required
 		+ ',"readOnly":' + this.readOnly
 		+ '}';
 }
@@ -1301,8 +1348,10 @@ xf.field.Checkbox.prototype.updateItems = function(value) {
 	var array = this.items.split(',');
 	for (var i = 0; i < array.length; i++) {
 		var item = array[i];
+		html += '<label class="checkbox inline">';
 		html += '<input type="checkbox" name="' + this.name + '" value="' + item + '" ' + (this.readOnly ? 'disabled' : '') + ' ' + (this.value == item ? 'checked' : '') + ' style="margin:0px;cursor:move;">';
 		html += item;
+		html += '</label>';
 	}
 	parentNode.innerHTML = html + '</div>';
 }
@@ -1384,6 +1433,16 @@ xf.field.FileUpload.prototype.setValue = function(value) {
 	if (this.readOnly) {
 		var parentNode = xf.$(this.parentId);
 		parentNode.innerHTML = value;
+	} else {
+		var parentNode = xf.$(this.parentId);
+		if (parentNode.children.length == 1) {
+			var span = document.createElement('span');
+			span.innerHTML = '<a href="../rs/store/view?model=form&key=' + value.key + '">' + value.label + '</a>';
+			parentNode.appendChild(span);
+		} else {
+			var span = parentNode.children[1];
+			span.innerHTML = '<a href="../rs/store/view?model=form&key=' + value.key + '">' + value.label + '</a>';
+		}
 	}
 }
 
@@ -1499,8 +1558,11 @@ xf.field.UserPicker.prototype.updateName = function(value) {
 	var parentNode = xf.$(this.parentId);
 	parentNode.innerHTML = 
 		'<div class="xf-handler">'
-		+ '<input type="text" name="' + this.name + '" class="input-medium userPicker" value="' + (this.value ? this.value : '') + '" style="margin-bottom:0px;cursor:move;">'
-		+ '<span style="padding:2px;" class="add-on"><i style="cursor:pointer;" class="icon-user userPickerBtn"></i></span>'
+		+'	<div class="input-append userPicker" style="padding-left: 0px;">'
+		+'      <input type="hidden" name="' + this.name + '" class="input-medium" value="">'
+		+'      <input type="text" name="' + this.name + '_name" class="input-medium" value="">'
+		+'      <span class="add-on"><i class="icon-user"></i></span>'
+		+'	</div>'
 		+ '</div>';
 }
 
