@@ -68,6 +68,11 @@ public class CompleteTaskOperation extends AbstractOperation<Void> {
 
         TaskService taskService = processEngine.getTaskService();
         Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+
+        if (task == null) {
+            throw new IllegalStateException("任务不存在");
+        }
+
         logger.info("{}", task.getDelegationState());
 
         if (DelegationState.PENDING == task.getDelegationState()) {
@@ -87,8 +92,8 @@ public class CompleteTaskOperation extends AbstractOperation<Void> {
         Map<String, String> formTypeMap = new HashMap<String, String>();
 
         if (formInfo.isFormExists()) {
-            FormTemplate formTemplate = formTemplateManager.findUniqueBy(
-                    "name", formInfo.getFormKey());
+            FormTemplate formTemplate = formTemplateManager.get(Long
+                    .parseLong(formInfo.getFormKey()));
 
             String content = formTemplate.getContent();
             logger.debug("content : {}", content);

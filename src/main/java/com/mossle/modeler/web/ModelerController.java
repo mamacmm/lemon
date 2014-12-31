@@ -91,6 +91,9 @@ public class ModelerController {
                 .name(modelData.getName())
                 .addString(processName, new String(bpmnBytes, "UTF-8"))
                 .deploy();
+        modelData.setDeploymentId(deployment.getId());
+        repositoryService.saveModel(modelData);
+
         List<ProcessDefinition> processDefinitions = repositoryService
                 .createProcessDefinitionQuery()
                 .deploymentId(deployment.getId()).list();

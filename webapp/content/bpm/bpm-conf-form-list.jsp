@@ -70,10 +70,15 @@ $(function() {
 		</header>
         <div id="bpmCategorySearch" class="content content-inner">
 
-		  <form name="bpmCategoryForm" method="post" action="bpm-task-def-user-save.do" class="form-inline">
-			<input type="hidden" name="bpmTaskDefId" value="${bpmTaskDefId}">
-		    <label for="participant">表单:</label>
-		    <input type="text" id="participant" name="participant" value="">
+		  <form name="bpmCategoryForm" method="post" action="bpm-conf-form-save.do" class="form-inline">
+			<input type="hidden" name="bpmConfNodeId" value="${param.bpmConfNodeId}">
+		    <label for="value">表单:</label>
+		    <input type="text" id="value" name="value" value="">
+		    <label for="type0">类型:</label>
+		    <input type="radio" id="type0" name="type" value="0" checked>
+		    <label for="type0">内部</label>
+		    <input type="radio" id="type1" name="type" value="1">
+		    <label for="type1">外部</label>
 			<button class="btn btn-small" onclick="document.bpmCategoryForm.submit()">提交</button>
 		  </form>
 
@@ -86,7 +91,7 @@ $(function() {
 		</header>
 		<div class="content">
 
-  <form id="bpmCategoryGridForm" name="bpmCategoryGridForm" method='post' action="bpm-task-def-user-save.do" style="margin:0px;">
+  <form id="bpmCategoryGridForm" name="bpmCategoryGridForm" method='post' action="bpm-conf-form-remove.do" style="margin:0px;">
     <input type="hidden" name="bpmTaskDefId" value="${bpmTaskDefId}">
     <table id="bpmCategoryGrid" class="m-table table-hover">
       <thead>
@@ -106,7 +111,7 @@ $(function() {
           <td>${item.value}</td>
           <td>${item.type == 0 ? '电子表单' : '外部表单'}</td>
           <td>
-		    <a href="bpm-node-user-remove.do?id=${item.id}">删除</a>
+		    <a href="bpm-conf-form-remove.do?id=${item.id}">删除</a>
           </td>
         </tr>
         </c:forEach>

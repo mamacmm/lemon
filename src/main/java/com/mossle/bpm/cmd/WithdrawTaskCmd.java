@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 import com.mossle.bpm.graph.ActivitiHistoryGraphBuilder;
@@ -18,6 +19,7 @@ import org.activiti.engine.ActivitiException;
 import org.activiti.engine.history.HistoricActivityInstance;
 import org.activiti.engine.impl.HistoricActivityInstanceQueryImpl;
 import org.activiti.engine.impl.Page;
+import org.activiti.engine.impl.cmd.GetDeploymentProcessDefinitionCmd;
 import org.activiti.engine.impl.context.Context;
 import org.activiti.engine.impl.interceptor.Command;
 import org.activiti.engine.impl.interceptor.CommandContext;
@@ -43,6 +45,9 @@ public class WithdrawTaskCmd implements Command<Integer> {
             .getLogger(WithdrawTaskCmd.class);
     private String historyTaskId;
 
+    /**
+     * 这个historyTaskId是已经完成的一个任务的id.
+     */
     public WithdrawTaskCmd(String historyTaskId) {
         this.historyTaskId = historyTaskId;
     }
@@ -53,9 +58,12 @@ public class WithdrawTaskCmd implements Command<Integer> {
      * @return 0-撤销成功 1-流程结束 2-下一结点已经通过,不能撤销
      */
     public Integer execute(CommandContext commandContext) {
+        // 获得历史任务
         HistoricTaskInstanceEntity historicTaskInstanceEntity = Context
                 .getCommandContext().getHistoricTaskInstanceEntityManager()
                 .findHistoricTaskInstanceById(historyTaskId);
+
+        // 获得历史节点
         HistoricActivityInstanceEntity historicActivityInstanceEntity = getHistoricActivityInstanceEntity(historyTaskId);
 
         Graph graph = new ActivitiHistoryGraphBuilder(
@@ -75,7 +83,7 @@ public class WithdrawTaskCmd implements Command<Integer> {
 
         // 获得期望撤销的节点后面的所有节点历史
         List<String> historyNodeIds = new ArrayList<String>();
-        collectNodes(node, historyNodeIds);
+        this.collectNodes(node, historyNodeIds);
         this.deleteHistoryActivities(historyNodeIds);
         // 恢复期望撤销的任务和历史
         this.processHistoryTask(historicTaskInstanceEntity,
@@ -121,15 +129,19 @@ public class WithdrawTaskCmd implements Command<Integer> {
 
             if ("userTask".equals(type)) {
                 if (!dest.isActive()) {
-                    logger.info("cannot withdraw, " + type + "("
-                            + dest.getName() + ") is complete.");
+                    boolean isSkip = isSkipActivity(dest.getId());
 
-                    return false;
+                    if (isSkip) {
+                        return checkCouldWithdraw(dest);
+                    } else {
+                        logger.info("cannot withdraw, " + type + "("
+                                + dest.getName() + ") is complete.");
+
+                        return false;
+                    }
                 }
             } else if (type.endsWith("Gateway")) {
-                if (!checkCouldWithdraw(dest)) {
-                    return false;
-                }
+                return checkCouldWithdraw(dest);
             } else {
                 logger.info("cannot withdraw, " + type + "(" + dest.getName()
                         + ") is complete.");
@@ -141,6 +153,9 @@ public class WithdrawTaskCmd implements Command<Integer> {
         return true;
     }
 
+    /**
+     * 删除未完成任务.
+     */
     public void deleteActiveTasks(String processInstanceId) {
         Context.getCommandContext().getTaskEntityManager()
                 .deleteTasksByProcessInstanceId(processInstanceId, null, true);
@@ -155,16 +170,29 @@ public class WithdrawTaskCmd implements Command<Integer> {
 
             Node dest = edge.getDest();
             historyNodeIds.add(dest.getId());
-            collectNodes(dest, historyNodeIds);
+            this.collectNodes(dest, historyNodeIds);
         }
     }
 
+    /**
+     * 删除历史节点.
+     */
     public void deleteHistoryActivities(List<String> historyNodeIds) {
         JdbcTemplate jdbcTemplate = ApplicationContextHelper
                 .getBean(JdbcTemplate.class);
         logger.info("historyNodeIds : {}", historyNodeIds);
 
         for (String id : historyNodeIds) {
+            String taskId = jdbcTemplate.queryForObject(
+                    "select task_id_ from ACT_HI_ACTINST where id_=?",
+                    String.class, id);
+
+            if (taskId != null) {
+                Context.getCommandContext()
+                        .getHistoricTaskInstanceEntityManager()
+                        .deleteHistoricTaskInstanceById(taskId);
+            }
+
             jdbcTemplate.update("delete from ACT_HI_ACTINST where id_=?", id);
         }
     }
@@ -177,7 +205,7 @@ public class WithdrawTaskCmd implements Command<Integer> {
         historicActivityInstanceEntity.setEndTime(null);
         historicActivityInstanceEntity.setDurationInMillis(null);
 
-        TaskEntity task = TaskEntity.create();
+        TaskEntity task = TaskEntity.create(new Date());
         task.setProcessDefinitionId(historicTaskInstanceEntity
                 .getProcessDefinitionId());
         task.setId(historicTaskInstanceEntity.getId());
@@ -205,11 +233,26 @@ public class WithdrawTaskCmd implements Command<Integer> {
 
     public ActivityImpl getActivity(
             HistoricActivityInstanceEntity historicActivityInstanceEntity) {
-        ProcessDefinitionEntity processDefinitionEntity = new FindProcessDefinitionEntityCmd(
+        ProcessDefinitionEntity processDefinitionEntity = new GetDeploymentProcessDefinitionCmd(
                 historicActivityInstanceEntity.getProcessDefinitionId())
                 .execute(Context.getCommandContext());
 
         return processDefinitionEntity
                 .findActivity(historicActivityInstanceEntity.getActivityId());
+    }
+
+    public boolean isSkipActivity(String historyActivityId) {
+        JdbcTemplate jdbcTemplate = ApplicationContextHelper
+                .getBean(JdbcTemplate.class);
+        String historyTaskId = jdbcTemplate.queryForObject(
+                "select task_id_ from ACT_HI_ACTINST where id_=?",
+                String.class, historyActivityId);
+
+        HistoricTaskInstanceEntity historicTaskInstanceEntity = Context
+                .getCommandContext().getHistoricTaskInstanceEntityManager()
+                .findHistoricTaskInstanceById(historyTaskId);
+        String deleteReason = historicTaskInstanceEntity.getDeleteReason();
+
+        return "跳过".equals(deleteReason);
     }
 }

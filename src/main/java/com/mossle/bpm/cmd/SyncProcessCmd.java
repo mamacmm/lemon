@@ -7,11 +7,13 @@ import java.util.Map;
 import com.mossle.bpm.graph.Graph;
 import com.mossle.bpm.graph.Node;
 import com.mossle.bpm.persistence.domain.BpmConfBase;
+import com.mossle.bpm.persistence.domain.BpmConfCountersign;
 import com.mossle.bpm.persistence.domain.BpmConfForm;
 import com.mossle.bpm.persistence.domain.BpmConfListener;
 import com.mossle.bpm.persistence.domain.BpmConfNode;
 import com.mossle.bpm.persistence.domain.BpmConfUser;
 import com.mossle.bpm.persistence.manager.BpmConfBaseManager;
+import com.mossle.bpm.persistence.manager.BpmConfCountersignManager;
 import com.mossle.bpm.persistence.manager.BpmConfFormManager;
 import com.mossle.bpm.persistence.manager.BpmConfListenerManager;
 import com.mossle.bpm.persistence.manager.BpmConfNodeManager;
@@ -26,6 +28,7 @@ import org.activiti.bpmn.model.Process;
 import org.activiti.bpmn.model.UserTask;
 
 import org.activiti.engine.impl.cmd.GetBpmnModelCmd;
+import org.activiti.engine.impl.cmd.GetDeploymentProcessDefinitionCmd;
 import org.activiti.engine.impl.context.Context;
 import org.activiti.engine.impl.interceptor.Command;
 import org.activiti.engine.impl.interceptor.CommandContext;
@@ -48,7 +51,7 @@ public class SyncProcessCmd implements Command<Void> {
     }
 
     public Void execute(CommandContext commandContext) {
-        ProcessDefinitionEntity processDefinitionEntity = new FindProcessDefinitionEntityCmd(
+        ProcessDefinitionEntity processDefinitionEntity = new GetDeploymentProcessDefinitionCmd(
                 processDefinitionId).execute(commandContext);
         String processDefinitionKey = processDefinitionEntity.getKey();
         int processDefinitionVersion = processDefinitionEntity.getVersion();
@@ -81,11 +84,11 @@ public class SyncProcessCmd implements Command<Void> {
             if ("exclusiveGateway".equals(node.getType())) {
                 continue;
             } else if ("userTask".equals(node.getType())) {
-                processUserTask(node, bpmnModel, priority++, bpmConfBase);
+                this.processUserTask(node, bpmnModel, priority++, bpmConfBase);
             } else if ("startEvent".equals(node.getType())) {
-                processStartEvent(node, bpmnModel, priority++, bpmConfBase);
+                this.processStartEvent(node, bpmnModel, priority++, bpmConfBase);
             } else if ("endEvent".equals(node.getType())) {
-                processEndEvent(node, bpmnModel, priority++, bpmConfBase);
+                this.processEndEvent(node, bpmnModel, priority++, bpmConfBase);
             }
         }
 
@@ -152,22 +155,34 @@ public class SyncProcessCmd implements Command<Void> {
         // 配置参与者
         UserTask userTask = (UserTask) bpmnModel.getFlowElement(node.getId());
         int index = 1;
-        index = processUserTaskConf(bpmConfNode, userTask.getAssignee(), 0,
-                index);
+        index = this.processUserTaskConf(bpmConfNode, userTask.getAssignee(),
+                0, index);
 
         for (String candidateUser : userTask.getCandidateUsers()) {
-            index = processUserTaskConf(bpmConfNode, candidateUser, 1, index);
+            index = this.processUserTaskConf(bpmConfNode, candidateUser, 1,
+                    index);
         }
 
         for (String candidateGroup : userTask.getCandidateGroups()) {
-            processUserTaskConf(bpmConfNode, candidateGroup, 2, index);
+            this.processUserTaskConf(bpmConfNode, candidateGroup, 2, index);
         }
 
         // 配置监听器
-        processListener(userTask.getExecutionListeners(), bpmConfNode);
-        processListener(userTask.getTaskListeners(), bpmConfNode);
+        this.processListener(userTask.getExecutionListeners(), bpmConfNode);
+        this.processListener(userTask.getTaskListeners(), bpmConfNode);
         // 配置表单
-        processForm(userTask, bpmConfNode);
+        this.processForm(userTask, bpmConfNode);
+
+        // 会签
+        if (userTask.getLoopCharacteristics() != null) {
+            BpmConfCountersign bpmConfCountersign = new BpmConfCountersign();
+            bpmConfCountersign.setType(0);
+            bpmConfCountersign.setRate(100);
+            bpmConfCountersign.setBpmConfNode(bpmConfNode);
+            bpmConfCountersign.setSequential(userTask.getLoopCharacteristics()
+                    .isSequential() ? 1 : 0);
+            getBpmConfCountersignManager().save(bpmConfCountersign);
+        }
     }
 
     /**
@@ -335,5 +350,10 @@ public class SyncProcessCmd implements Command<Void> {
 
     public BpmConfFormManager getBpmConfFormManager() {
         return ApplicationContextHelper.getBean(BpmConfFormManager.class);
+    }
+
+    public BpmConfCountersignManager getBpmConfCountersignManager() {
+        return ApplicationContextHelper
+                .getBean(BpmConfCountersignManager.class);
     }
 }
