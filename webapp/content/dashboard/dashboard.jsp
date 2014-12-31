@@ -13,7 +13,7 @@
 	<script type="text/javascript">
 $(function(){
     function widget2ToggleContent() {
-        var self = $(this);
+    	var self = $(this);
         self.toggleClass('icon-chevron-up');
         self.toggleClass('icon-chevron-down');
         var widget = self.parents('.m-widget-2');
