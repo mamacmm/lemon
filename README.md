@@ -9,3 +9,8 @@ lemon
 开源OA
 
 http://www.mossle.com/
+
+
+使用 jdk1.8 不报错
+
+
